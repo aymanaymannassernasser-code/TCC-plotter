@@ -1,0 +1,1556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCC Plotter — Sepam Series 40</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════
+   DESIGN TOKEN SYSTEM — Industrial Instrument
+══════════════════════════════════════════════ */
+:root {
+  --paper:     #f8f9fb;
+  --canvas:    #ffffff;
+  --shell:     #eef0f5;
+  --panel:     #f3f4f8;
+  --rule:      #dde0ea;
+  --rule2:     #c9cdd9;
+  --ink:       #1c2033;
+  --ink2:      #454d6b;
+  --ink3:      #7b83a0;
+  --ink4:      #a8adc0;
+  --live:      #0f5fff;
+  --live-bg:   #eaf0ff;
+  --live-rule: #b8ccff;
+
+  /* Curve palette — industrial signal colors */
+  --c0: #1a56db; /* blue      — stator cold  */
+  --c1: #6366f1; /* violet    — stator hot   */
+  --c2: #b45309; /* amber     — rotor cold   */
+  --c3: #d97706; /* orange    — rotor hot    */
+  --c4: #0d9488; /* teal      — 49RMS cold   */
+  --c5: #10b981; /* emerald   — 49RMS hot    */
+  --c6: #059669; /* green     — 49RMS rate2  */
+  --c7: #7c3aed; /* purple    — OC curve     */
+  --c8: #db2777; /* pink      — extra        */
+  --c9: #0891b2; /* cyan      — extra        */
+
+  --sidebar-w: 302px;
+  --header-h:  48px;
+  --radius:    5px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--shell);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12.5px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── HEADER ── */
+header {
+  height: var(--header-h);
+  background: var(--canvas);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 0 var(--rule);
+  z-index: 10;
+}
+.h-logo {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 13px; font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.3px;
+}
+.h-logomark {
+  width: 26px; height: 26px;
+  background: var(--live);
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+}
+.h-logomark svg { width: 14px; height: 14px; }
+.h-sep { width: 1px; height: 18px; background: var(--rule); }
+.h-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--rule);
+  color: var(--ink3);
+  background: var(--panel);
+  letter-spacing: 0.2px;
+}
+.h-badge.active { border-color: var(--live-rule); color: var(--live); background: var(--live-bg); }
+.h-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+/* ── WORKSPACE ── */
+.workspace { display: flex; flex: 1; overflow: hidden; }
+
+/* ── LEFT SIDEBAR ── */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--canvas);
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.stab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink3);
+  text-align: center;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.12s;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+.stab.active { color: var(--live); border-bottom-color: var(--live); background: var(--live-bg); }
+.stab:hover:not(.active) { color: var(--ink2); background: var(--panel); }
+
+.tab-pane { display: none; flex: 1; overflow-y: auto; flex-direction: column; }
+.tab-pane.active { display: flex; }
+
+/* ── CURVE LIST (Layers tab) ── */
+.curve-list { flex: 1; overflow-y: auto; padding: 8px; }
+.curve-list-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; height: 160px;
+  color: var(--ink4);
+  font-size: 11px;
+  text-align: center;
+  font-family: 'DM Mono', monospace;
+}
+.curve-list-empty .empty-icon { font-size: 28px; opacity: 0.4; }
+
+.curve-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  background: var(--canvas);
+  transition: border-color 0.1s;
+  cursor: pointer;
+}
+.curve-item:hover { border-color: var(--rule2); }
+.curve-item.selected { border-color: var(--live); background: var(--live-bg); }
+
+.ci-swatch { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.ci-info { flex: 1; min-width: 0; }
+.ci-name { font-size: 11px; font-weight: 500; color: var(--ink); line-height: 1.2; }
+.ci-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink3); margin-top: 1px; }
+.ci-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.ci-btn {
+  width: 20px; height: 20px;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink3);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  transition: all 0.1s;
+}
+.ci-btn:hover { background: var(--shell); border-color: var(--rule2); color: var(--ink); }
+.ci-btn.del:hover { border-color: #fca5a5; color: #dc2626; background: #fff1f1; }
+.ci-btn.off { opacity: 0.45; }
+
+.ci-line-sample { flex-shrink: 0; }
+.ci-line-sample svg { display: block; }
+
+/* ADD button */
+.add-curve-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 8px;
+  padding: 7px;
+  border: 1.5px dashed var(--rule2);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink3);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.add-curve-btn:hover {
+  border-color: var(--live);
+  color: var(--live);
+  background: var(--live-bg);
+}
+
+/* ── PROPERTIES PANEL (Settings tab) ── */
+.prop-panel { padding: 10px 12px; }
+.prop-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; height: 120px;
+  color: var(--ink4);
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  text-align: center;
+}
+
+.prop-section { margin-bottom: 12px; }
+.prop-title {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--ink4);
+  margin-bottom: 7px;
+  display: flex; align-items: center; gap: 5px;
+}
+.prop-title-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rule2); }
+
+.field { margin-bottom: 6px; }
+.field-label {
+  font-size: 10px; font-weight: 500; color: var(--ink2);
+  margin-bottom: 2px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.field-label .mono { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink3); }
+.field-input {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: 'DM Mono', monospace;
+  font-size: 11.5px;
+  padding: 4px 7px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.field-input:focus { border-color: var(--live); box-shadow: 0 0 0 2px rgba(15,95,255,0.1); }
+select.field-input option { background: white; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
+
+.eq-display {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--ink2);
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.eq-display .eq-label {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--ink4);
+  margin-bottom: 3px;
+}
+
+.apply-btn {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%;
+  padding: 7px;
+  border-radius: var(--radius);
+  border: 1px solid var(--live);
+  background: var(--live);
+  color: white;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s;
+  margin-top: 6px;
+}
+.apply-btn:hover { background: #0a4de8; }
+
+/* Point list */
+.point-list {
+  max-height: 110px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--panel);
+  margin-top: 5px;
+}
+.point-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 7px;
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  color: var(--ink2);
+  border-bottom: 1px solid var(--rule);
+}
+.point-item:last-child { border-bottom: none; }
+.point-item:hover { background: var(--shell); }
+.del-pt { cursor: pointer; color: var(--ink4); font-size: 13px; }
+.del-pt:hover { color: #dc2626; }
+
+/* ── ADD CURVE MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(10, 15, 30, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--canvas);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  width: 520px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(10,15,30,0.2);
+}
+.modal-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.modal-close {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink3);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.modal-close:hover { background: var(--shell); color: var(--ink); }
+
+.modal-body { padding: 14px 16px; }
+
+.curve-type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-bottom: 14px;
+}
+.ct-card {
+  padding: 10px 8px;
+  border: 1.5px solid var(--rule);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s;
+  background: var(--canvas);
+}
+.ct-card:hover { border-color: var(--live-rule); background: var(--live-bg); }
+.ct-card.selected { border-color: var(--live); background: var(--live-bg); }
+.ct-card-icon { font-size: 18px; margin-bottom: 4px; }
+.ct-card-name { font-size: 10.5px; font-weight: 600; color: var(--ink); }
+.ct-card-sub { font-size: 9px; color: var(--ink3); margin-top: 1px; font-family: 'DM Mono', monospace; }
+
+.modal-config { display: none; }
+.modal-config.visible { display: block; }
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.preset-btn {
+  padding: 7px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink2);
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.1s;
+}
+.preset-btn:hover { border-color: var(--live-rule); background: var(--live-bg); color: var(--live); }
+.preset-btn.active { border-color: var(--live); background: var(--live-bg); color: var(--live); font-weight: 500; }
+.preset-family {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--ink4);
+  margin: 8px 0 5px 0;
+}
+
+.modal-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+.mfbtn {
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.mfbtn:hover { background: var(--shell); }
+.mfbtn.confirm { background: var(--live); border-color: var(--live); color: white; }
+.mfbtn.confirm:hover { background: #0a4de8; }
+
+/* ── CHART AREA ── */
+.chart-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--shell);
+  position: relative;
+}
+.draw-bar {
+  display: none;
+  padding: 6px 14px;
+  background: var(--live-bg);
+  border-bottom: 2px solid var(--live);
+  font-size: 11px; font-weight: 500; color: var(--live);
+  align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.draw-bar.visible { display: flex; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: p 1s ease infinite; }
+@keyframes p { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+#chart-svg { width: 100%; height: 100%; display: block; }
+
+.status-bar {
+  height: 24px;
+  background: var(--canvas);
+  border-top: 1px solid var(--rule);
+  display: flex; align-items: center;
+  padding: 0 12px; gap: 20px;
+  flex-shrink: 0;
+}
+.sb-item {
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px; color: var(--ink3);
+  display: flex; align-items: center; gap: 4px;
+}
+.sb-item b { color: var(--ink2); font-weight: 500; }
+
+#tooltip {
+  position: fixed;
+  background: var(--ink);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px;
+  color: #e8ebf4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.08s;
+  z-index: 50;
+  white-space: nowrap;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule2); border-radius: 2px; }
+
+/* Axis */
+.axis text { fill: var(--ink3); font-family: 'DM Mono', monospace; font-size: 9px; }
+.axis path, .axis line { stroke: var(--rule2); }
+.axis-label { fill: var(--ink2); font-family: 'DM Sans', sans-serif; font-size: 9.5px; font-weight: 500; letter-spacing: 0.3px; }
+
+/* section note */
+.snote { font-size: 9.5px; color: var(--ink3); line-height: 1.55; margin-top: 4px; }
+
+/* small buttons */
+.sbtn {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.1s;
+  width: 100%; margin-bottom: 4px;
+}
+.sbtn:hover { background: var(--shell); border-color: var(--rule2); }
+.sbtn.draw-active { border-color: var(--live); color: var(--live); background: var(--live-bg); }
+.sbtn.danger { border-color: #fca5a5; color: #dc2626; }
+.sbtn.danger:hover { background: #fff1f1; }
+
+/* Header buttons */
+.hbtn {
+  padding: 5px 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11.5px; font-weight: 500;
+  cursor: pointer; transition: all 0.1s;
+  display: flex; align-items: center; gap: 4px;
+}
+.hbtn:hover { background: var(--shell); border-color: var(--rule2); }
+.hbtn.primary { background: var(--live); border-color: var(--live); color: white; }
+.hbtn.primary:hover { background: #0a4de8; }
+
+/* table input entry */
+.table-row { display: grid; grid-template-columns: 1fr 1fr 24px; gap: 4px; margin-bottom: 4px; align-items: center; }
+.table-header { display: grid; grid-template-columns: 1fr 1fr 24px; gap: 4px; margin-bottom: 3px; }
+.table-header span { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink4); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* Divider */
+.divider { height: 1px; background: var(--rule); margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="h-logo">
+    <div class="h-logomark">
+      <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polyline points="1,12 5,4 9,8 13,2" stroke="white" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" fill="none"/>
+      </svg>
+    </div>
+    TCC Plotter
+  </div>
+  <div class="h-sep"></div>
+  <span class="h-badge active">Sepam Series 40</span>
+  <span class="h-badge">ANSI 49RMS</span>
+  <span class="h-badge">IEC 60255-151</span>
+  <span class="h-badge">IEEE C37.112</span>
+  <div class="h-actions">
+    <button class="hbtn" id="btn-clear-all">Clear All</button>
+    <button class="hbtn primary" id="btn-export">↓ SVG</button>
+  </div>
+</header>
+
+<div class="workspace">
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-tabs">
+    <button class="stab active" data-tab="layers">Curves</button>
+    <button class="stab" data-tab="settings">Settings</button>
+    <button class="stab" data-tab="damage">Damage</button>
+  </div>
+
+  <!-- TAB: CURVES (Layers) -->
+  <div class="tab-pane active" id="tab-layers">
+    <div class="curve-list" id="curve-list">
+      <div class="curve-list-empty" id="list-empty">
+        <div class="empty-icon">⟋</div>
+        <div>No curves added yet.<br>Click below to begin.</div>
+      </div>
+    </div>
+    <button class="add-curve-btn" id="btn-add-curve">+ Add Curve</button>
+  </div>
+
+  <!-- TAB: SETTINGS (Properties of selected curve) -->
+  <div class="tab-pane" id="tab-settings">
+    <div id="prop-area">
+      <div class="prop-empty" style="margin:20px 12px;">
+        <div>↖ Select a curve<br>to edit its settings</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: DAMAGE CURVES -->
+  <div class="tab-pane" id="tab-damage" style="padding:10px 12px; gap:8px;">
+    <div class="prop-section">
+      <div class="prop-title"><div class="prop-title-dot" style="background:#1a56db"></div>Active Trace Target</div>
+      <div class="field">
+        <select class="field-input" id="trace-target">
+          <option value="stator_cold">Stator — Cold</option>
+          <option value="stator_hot">Stator — Hot</option>
+          <option value="rotor_cold">Rotor — Cold (Locked Rotor)</option>
+          <option value="rotor_hot">Rotor — Hot (Locked Rotor)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="prop-section">
+      <div class="prop-title"><div class="prop-title-dot"></div>Draw on Chart</div>
+      <button class="sbtn" id="btn-draw">✎ &nbsp;Enter Draw Mode</button>
+      <button class="sbtn danger" id="btn-clear-trace">✕ &nbsp;Clear Active Curve</button>
+      <p class="snote">Click chart to place points. Right-click a dot to remove it.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="prop-section">
+      <div class="prop-title"><div class="prop-title-dot"></div>Manual Table Entry</div>
+      <div class="table-header">
+        <span>I / In (×)</span><span>Time (s)</span><span></span>
+      </div>
+      <div id="table-rows"></div>
+      <button class="sbtn" id="btn-add-row" style="margin-top:2px;">+ Add Row</button>
+      <button class="sbtn" id="btn-apply-table" style="margin-top:2px;">↺ Apply Table</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="prop-section">
+      <div class="prop-title"><div class="prop-title-dot"></div>Placed Points</div>
+      <div class="point-list" id="point-list"></div>
+    </div>
+  </div>
+</div><!-- /sidebar -->
+
+<!-- CHART AREA -->
+<div class="chart-area">
+  <div class="draw-bar" id="draw-bar">
+    <div class="pulse"></div>
+    DRAW MODE &nbsp;·&nbsp; <strong id="draw-target-label">—</strong>
+    &nbsp;|&nbsp; Click to place points
+    &nbsp;|&nbsp; <span style="cursor:pointer;text-decoration:underline;" id="exit-draw">Exit</span>
+  </div>
+  <svg id="chart-svg"></svg>
+  <div class="status-bar">
+    <div class="sb-item">Cursor: <b id="st-coord">—</b></div>
+    <div class="sb-item">Curves: <b id="st-count">0</b></div>
+    <div class="sb-item" style="margin-left:auto;">
+      <span style="font-size:9px;color:var(--ink4)">Right-click plotted point to remove</span>
+    </div>
+  </div>
+</div>
+
+</div><!-- /workspace -->
+
+<!-- ADD CURVE MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add Curve</span>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <!-- Step 1: pick type -->
+      <div id="modal-step1">
+        <p style="font-size:10.5px;color:var(--ink3);margin-bottom:10px;">Select the type of curve to add to the plot:</p>
+        <div class="curve-type-grid">
+          <div class="ct-card" data-type="thermal49">
+            <div class="ct-card-icon">🌡</div>
+            <div class="ct-card-name">Thermal Image</div>
+            <div class="ct-card-sub">ANSI 49RMS</div>
+          </div>
+          <div class="ct-card" data-type="idmt51">
+            <div class="ct-card-icon">⚡</div>
+            <div class="ct-card-name">Overcurrent</div>
+            <div class="ct-card-sub">ANSI 50/51 IDMT</div>
+          </div>
+          <div class="ct-card" data-type="definite">
+            <div class="ct-card-icon">⏱</div>
+            <div class="ct-card-name">Definite Time</div>
+            <div class="ct-card-sub">ANSI 50 DT</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: configure -->
+      <div id="modal-step2" style="display:none;">
+        <div id="cfg-thermal49" class="modal-config">
+          <div class="eq-display">
+            <div class="eq-label">49RMS Trip Formula (IEC 60255-149)</div>
+            t = T₁ · ln[(Ieq² − E₀²) / (Ieq² − Is2²)]<br>
+            <span style="color:var(--ink4)">Cold: E₀ = Es0/100 &nbsp;|&nbsp; Hot: E₀ = 1.0 (fixed)</span>
+          </div>
+          <div class="field">
+            <div class="field-label">Curve Label</div>
+            <input class="field-input" id="cfg-t49-label" type="text" value="49RMS — Rate 1">
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">Es2 — Trip threshold <span class="mono">(%)</span></div>
+              <input class="field-input" id="cfg-t49-es2" type="number" value="110" step="1" min="50" max="300">
+            </div>
+            <div class="field">
+              <div class="field-label">Es1 — Alarm <span class="mono">(%)</span></div>
+              <input class="field-input" id="cfg-t49-es1" type="number" value="80" step="1" min="50" max="299">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">T1 — Heating <span class="mono">(min)</span></div>
+              <input class="field-input" id="cfg-t49-t1" type="number" value="50" step="1" min="5" max="120">
+            </div>
+            <div class="field">
+              <div class="field-label">T2 — Cooling <span class="mono">(min)</span></div>
+              <input class="field-input" id="cfg-t49-t2" type="number" value="150" step="1" min="5" max="600">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">Es0 — Cold offset <span class="mono">(%)</span></div>
+              <input class="field-input" id="cfg-t49-es0" type="number" value="0" step="1" min="0" max="100">
+            </div>
+            <div class="field">
+              <div class="field-label">K — Neg. seq. factor</div>
+              <select class="field-input" id="cfg-t49-k">
+                <option value="0" selected>0 — None</option>
+                <option value="2.25">2.25</option>
+                <option value="4.5">4.5</option>
+                <option value="9">9</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-label">Plot variants</div>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;">
+                <input type="checkbox" id="cfg-t49-cold" checked> Cold curve
+              </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;">
+                <input type="checkbox" id="cfg-t49-hot" checked> Hot curve
+              </label>
+            </div>
+          </div>
+          <p class="snote">Hot curve uses E₀ = 1.0 (fixed). Es0 only shifts cold curve.</p>
+        </div>
+
+        <div id="cfg-idmt51" class="modal-config">
+          <div class="eq-display">
+            <div class="eq-label">IDMT Formula (IEC 60255-151 / IEEE C37.112)</div>
+            t = TMS · α / (M^β − 1) &nbsp;&nbsp; M = I / Is
+          </div>
+          <div class="field">
+            <div class="field-label">Curve Label</div>
+            <input class="field-input" id="cfg-51-label" type="text" value="ANSI 51 — VIT">
+          </div>
+          <div class="preset-family">IEC 60255-151</div>
+          <div class="preset-grid" id="iec-presets">
+            <button class="preset-btn" data-curve="SIT">SIT — Standard Inverse<br><span style="opacity:0.65">α=0.14, β=0.02</span></button>
+            <button class="preset-btn" data-curve="VIT">VIT — Very Inverse<br><span style="opacity:0.65">α=13.5, β=1.0</span></button>
+            <button class="preset-btn" data-curve="EIT">EIT — Extremely Inverse<br><span style="opacity:0.65">α=80.0, β=2.0</span></button>
+            <button class="preset-btn" data-curve="LTI">LTI — Long Time Inverse<br><span style="opacity:0.65">α=120.0, β=1.0</span></button>
+          </div>
+          <div class="preset-family">IEEE C37.112</div>
+          <div class="preset-grid">
+            <button class="preset-btn" data-curve="MI">MI — Mod. Inverse<br><span style="opacity:0.65">α=0.0515, β=0.02</span></button>
+            <button class="preset-btn" data-curve="VI">VI — Very Inverse<br><span style="opacity:0.65">α=19.61, β=2.0</span></button>
+            <button class="preset-btn" data-curve="EI">EI — Ext. Inverse<br><span style="opacity:0.65">α=28.2, β=2.0</span></button>
+          </div>
+          <div class="preset-family">Schneider Proprietary</div>
+          <div class="preset-grid">
+            <button class="preset-btn" data-curve="SE">SE — Schneider Inverse<br><span style="opacity:0.65">Piecewise (3 zones)</span></button>
+          </div>
+          <div class="divider" style="margin:10px 0;"></div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">α (alpha)</div>
+              <input class="field-input" id="cfg-51-alpha" type="number" value="13.5" step="0.001">
+            </div>
+            <div class="field">
+              <div class="field-label">β (beta)</div>
+              <input class="field-input" id="cfg-51-beta" type="number" value="1.0" step="0.001">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">Is — Pickup <span class="mono">(× In)</span></div>
+              <input class="field-input" id="cfg-51-is" type="number" value="1.25" step="0.01">
+            </div>
+            <div class="field">
+              <div class="field-label">TMS / TDS</div>
+              <input class="field-input" id="cfg-51-tms" type="number" value="0.5" step="0.01">
+            </div>
+          </div>
+          <div id="se-note" style="display:none;" class="snote" style="margin-top:4px;">
+            Schneider curve: piecewise — t = (3.19/x^1.5)·T for x&lt;0.5, (4.64/x^0.96)·T for 0.5≤x≤5, T for x&gt;5. α/β fields ignored.
+          </div>
+        </div>
+
+        <div id="cfg-definite" class="modal-config">
+          <div class="eq-display">
+            <div class="eq-label">Definite Time</div>
+            t = Delay &nbsp;&nbsp;(constant, for I &gt; Is)
+          </div>
+          <div class="field">
+            <div class="field-label">Curve Label</div>
+            <input class="field-input" id="cfg-dt-label" type="text" value="ANSI 50 — Instantaneous">
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <div class="field-label">Is — Pickup <span class="mono">(× In)</span></div>
+              <input class="field-input" id="cfg-dt-is" type="number" value="6.0" step="0.1">
+            </div>
+            <div class="field">
+              <div class="field-label">Delay <span class="mono">(s)</span></div>
+              <input class="field-input" id="cfg-dt-delay" type="number" value="0.05" step="0.01">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="mfbtn" id="modal-back" style="display:none;">← Back</button>
+      <button class="mfbtn" id="modal-cancel">Cancel</button>
+      <button class="mfbtn confirm" id="modal-next">Next →</button>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════
+//  CONSTANTS & PRESETS
+// ═══════════════════════════════════════════════════
+const IDMT_PRESETS = {
+  SIT: { alpha: 0.14,   beta: 0.02, label: 'SIT — Standard Inverse (IEC)',   family:'IEC' },
+  VIT: { alpha: 13.5,   beta: 1.0,  label: 'VIT — Very Inverse (IEC)',        family:'IEC' },
+  EIT: { alpha: 80.0,   beta: 2.0,  label: 'EIT — Extremely Inverse (IEC)',   family:'IEC' },
+  LTI: { alpha: 120.0,  beta: 1.0,  label: 'LTI — Long Time Inverse (IEC)',   family:'IEC' },
+  MI:  { alpha: 0.0515, beta: 0.02, label: 'MI — Mod. Inverse (IEEE)',         family:'IEEE' },
+  VI:  { alpha: 19.61,  beta: 2.0,  label: 'VI — Very Inverse (IEEE)',         family:'IEEE' },
+  EI:  { alpha: 28.2,   beta: 2.0,  label: 'EI — Ext. Inverse (IEEE)',         family:'IEEE' },
+  SE:  { alpha: null,   beta: null,  label: 'Schneider Proprietary',            family:'SE' },
+};
+
+// Damage curve display config
+const DAMAGE_CFG = {
+  stator_cold: { label:'Stator — Cold', color:'#1a56db', dash:null },
+  stator_hot:  { label:'Stator — Hot',  color:'#6366f1', dash:'6,3' },
+  rotor_cold:  { label:'Rotor — Cold',  color:'#b45309', dash:null },
+  rotor_hot:   { label:'Rotor — Hot',   color:'#d97706', dash:'6,3' },
+};
+
+// Palette cycling for added curves
+const PALETTE = ['#0d9488','#7c3aed','#db2777','#0891b2','#059669','#d97706','#1a56db','#6366f1','#b45309','#dc2626'];
+let paletteIdx = 0;
+
+// ═══════════════════════════════════════════════════
+//  APPLICATION STATE
+// ═══════════════════════════════════════════════════
+let curves = [];       // array of curve objects
+let selectedId = null; // currently selected curve id
+let damagePoints = { stator_cold:[], stator_hot:[], rotor_cold:[], rotor_hot:[] };
+let drawMode = false;
+let traceTarget = 'stator_cold';
+let nextId = 1;
+
+// ═══════════════════════════════════════════════════
+//  CHART SETUP
+// ═══════════════════════════════════════════════════
+const svgEl = document.getElementById('chart-svg');
+const margin = { top:28, right:38, bottom:52, left:62 };
+let xSc, ySc, chartG;
+
+function initChart() {
+  d3.select('#chart-svg').selectAll('*').remove();
+  const W = svgEl.clientWidth, H = svgEl.clientHeight;
+  const w = W - margin.left - margin.right;
+  const h = H - margin.top - margin.bottom;
+  xSc = d3.scaleLog().domain([0.8, 15]).range([0, w]);
+  ySc = d3.scaleLog().domain([0.1, 7200]).range([h, 0]);
+  const svg = d3.select('#chart-svg');
+
+  chartG = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  // Chart background
+  chartG.append('rect').attr('width',w).attr('height',h)
+    .attr('fill','#ffffff').attr('stroke','#dde0ea').attr('stroke-width',1);
+
+  // Grid lines
+  const xMajor = [1,2,5,10];
+  const yMajor = [1,10,60,600,3600];
+  const xAll = [0.8,0.9,1,1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8,1.9,2,2.5,3,3.5,4,4.5,5,6,7,8,9,10,12,15];
+  const yAll = [0.1,0.2,0.3,0.5,1,2,3,5,10,15,20,30,60,120,300,600,1200,3600,7200];
+
+  chartG.append('g').selectAll('line').data(xAll).enter().append('line')
+    .attr('x1',d=>xSc(d)).attr('x2',d=>xSc(d)).attr('y1',0).attr('y2',h)
+    .attr('stroke',d=>xMajor.includes(d)?'#c9cdd9':'#eef0f5')
+    .attr('stroke-width',d=>xMajor.includes(d)?0.8:0.5);
+
+  chartG.append('g').selectAll('line').data(yAll).enter().append('line')
+    .attr('x1',0).attr('x2',w).attr('y1',d=>ySc(d)).attr('y2',d=>ySc(d))
+    .attr('stroke',d=>yMajor.includes(d)?'#c9cdd9':'#eef0f5')
+    .attr('stroke-width',d=>yMajor.includes(d)?0.8:0.5);
+
+  // Axes
+  const xTickVals = [0.8,1,1.5,2,3,4,5,6,7,8,10,12,15];
+  const yTickVals = [0.1,0.2,0.5,1,2,5,10,20,30,60,120,300,600,1200,3600,7200];
+
+  chartG.append('g').attr('class','axis').attr('transform',`translate(0,${h})`)
+    .call(d3.axisBottom(xSc).tickValues(xTickVals).tickFormat(d=>`${d}×`));
+  chartG.append('g').attr('class','axis')
+    .call(d3.axisLeft(ySc).tickValues(yTickVals).tickFormat(d=>{
+      if(d>=3600) return `${d/3600}h`;
+      if(d>=60)   return `${d/60}m`;
+      return `${d}s`;
+    }));
+
+  // Axis labels
+  chartG.append('text').attr('class','axis-label')
+    .attr('x',w/2).attr('y',h+42).attr('text-anchor','middle')
+    .text('CURRENT  —  I / In  (multiples of rated current)');
+  chartG.append('text').attr('class','axis-label')
+    .attr('transform','rotate(-90)').attr('x',-h/2).attr('y',-50)
+    .attr('text-anchor','middle').text('TIME  —  seconds');
+
+  // Clip
+  svg.append('defs').append('clipPath').attr('id','cc')
+    .append('rect').attr('width',w).attr('height',h);
+
+  chartG.append('g').attr('clip-path','url(#cc)').attr('id','curves-g');
+
+  // Mouse overlay
+  chartG.append('rect').attr('id','mouse-overlay')
+    .attr('width',w).attr('height',h).attr('fill','transparent')
+    .style('cursor', drawMode ? 'crosshair' : 'default')
+    .on('click', onChartClick)
+    .on('mousemove', onMouseMove)
+    .on('mouseleave',()=>{ d3.select('#tooltip').style('opacity',0); document.getElementById('st-coord').textContent='—'; });
+}
+
+// ═══════════════════════════════════════════════════
+//  MATH — 49RMS Thermal
+// ═══════════════════════════════════════════════════
+function thermalPoints(T1_min, Es2_pct, E0_pu, nPts=300) {
+  const T1 = T1_min * 60, Is2 = Es2_pct / 100, E0 = E0_pu;
+  const Imin = Math.max(Is2, E0) + 0.003;
+  if (Imin >= 15) return [];
+  const pts = [];
+  for (let i=0; i<=nPts; i++) {
+    const I = Math.pow(10, Math.log10(Imin) + (i/nPts)*(Math.log10(15)-Math.log10(Imin)));
+    const num = I*I - E0*E0, den = I*I - Is2*Is2;
+    if (den<=0 || num<=0) continue;
+    const t = T1 * Math.log(num/den);
+    if (t>=0.08 && t<=7200) pts.push([I,t]);
+  }
+  return pts;
+}
+
+// ═══════════════════════════════════════════════════
+//  MATH — IDMT Overcurrent
+// ═══════════════════════════════════════════════════
+function idmtPoints(alpha, beta, Is_pu, TMS, nPts=300) {
+  const pts = [];
+  const Imin = Is_pu + 0.005;
+  for (let i=0; i<=nPts; i++) {
+    const I = Math.pow(10, Math.log10(Imin) + (i/nPts)*(Math.log10(15)-Math.log10(Imin)));
+    const M = I / Is_pu;
+    if (M <= 1.001) continue;
+    const denom = Math.pow(M, beta) - 1;
+    if (denom <= 0) continue;
+    const t = TMS * alpha / denom;
+    if (t>=0.05 && t<=7200) pts.push([I,t]);
+  }
+  return pts;
+}
+
+// Schneider proprietary piecewise (3 zones, per Sepam 40 manual)
+function schneiderPoints(Is_pu, T, nPts=300) {
+  const pts = [];
+  const Imin = Is_pu + 0.005;
+  for (let i=0; i<=nPts; i++) {
+    const I = Math.pow(10, Math.log10(Imin) + (i/nPts)*(Math.log10(15)-Math.log10(Imin)));
+    const x = I / Is_pu; // x = I/Ib in Sepam notation
+    let t;
+    if (x < 0.5)      t = (3.19 / Math.pow(x, 1.5)) * T;
+    else if (x <= 5)  t = (4.64 / Math.pow(x, 0.96)) * T;
+    else              t = T;
+    if (t>=0.05 && t<=7200) pts.push([I,t]);
+  }
+  return pts;
+}
+
+// ═══════════════════════════════════════════════════
+//  MATH — Definite Time
+// ═══════════════════════════════════════════════════
+function definitePoints(Is_pu, delay) {
+  // Horizontal line from Is to 15× at constant delay
+  return [[Is_pu, delay],[15, delay]];
+}
+
+// ═══════════════════════════════════════════════════
+//  CURVE DATA POINTS DISPATCHER
+// ═══════════════════════════════════════════════════
+function getCurvePoints(c) {
+  if (c.type === 'thermal49') {
+    const result = {};
+    if (c.params.showCold) result.cold = thermalPoints(c.params.T1, c.params.Es2, c.params.Es0/100);
+    if (c.params.showHot)  result.hot  = thermalPoints(c.params.T1, c.params.Es2, 1.0);
+    return result;
+  }
+  if (c.type === 'idmt51') {
+    if (c.params.presetKey === 'SE')
+      return { main: schneiderPoints(c.params.Is, c.params.TMS) };
+    return { main: idmtPoints(c.params.alpha, c.params.beta, c.params.Is, c.params.TMS) };
+  }
+  if (c.type === 'definite') {
+    return { main: definitePoints(c.params.Is, c.params.delay) };
+  }
+  return {};
+}
+
+// ═══════════════════════════════════════════════════
+//  RENDER ALL CURVES
+// ═══════════════════════════════════════════════════
+function renderCurves() {
+  const g = d3.select('#curves-g');
+  g.selectAll('*').remove();
+
+  const line = d3.line().x(d=>xSc(d[0])).y(d=>ySc(d[1]))
+    .defined(d=>d[1]>=0.08 && d[1]<=7200 && d[0]>=0.8 && d[0]<=15)
+    .curve(d3.curveCatmullRom.alpha(0.5));
+
+  function drawPath(pts, color, dash, w) {
+    if (!pts || pts.length < 2) return;
+    g.append('path').datum(pts).attr('fill','none')
+      .attr('d', line)
+      .attr('stroke', color)
+      .attr('stroke-width', w || 2)
+      .attr('stroke-dasharray', dash || null)
+      .attr('stroke-linecap','round').attr('stroke-linejoin','round')
+      .attr('opacity', 0.9);
+  }
+
+  // Damage curves
+  Object.entries(damagePoints).forEach(([key, pts]) => {
+    if (!pts.length) return;
+    const cfg = DAMAGE_CFG[key];
+    drawPath(pts, cfg.color, cfg.dash, 2.2);
+    // Dots
+    g.selectAll(`.d-${key}`).data(pts).enter().append('circle')
+      .attr('class',`d-${key}`)
+      .attr('cx',d=>xSc(d[0])).attr('cy',d=>ySc(d[1]))
+      .attr('r',3.5).attr('fill',cfg.color).attr('stroke','#fff').attr('stroke-width',1.2)
+      .style('cursor','pointer')
+      .on('contextmenu',(e,d)=>{
+        e.preventDefault();
+        damagePoints[key]=damagePoints[key].filter(p=>p!==d);
+        renderCurves(); refreshPointList();
+      });
+    // Label
+    const mid = pts[Math.floor(pts.length*0.25)];
+    if(mid) g.append('text')
+      .attr('x',xSc(mid[0])+5).attr('y',ySc(mid[1])-5)
+      .attr('fill',cfg.color).attr('font-size','9px')
+      .attr('font-family','DM Sans, sans-serif').attr('font-weight','600').attr('opacity',0.75)
+      .text(cfg.label);
+  });
+
+  // Added curves
+  curves.forEach(c => {
+    if (!c.visible) return;
+    const pts = getCurvePoints(c);
+    if (c.type === 'thermal49') {
+      drawPath(pts.cold, c.color, null, 2.4);
+      drawPath(pts.hot,  c.color, '8,4', 2);
+      const allPts = [...(pts.cold||[]), ...(pts.hot||[])];
+      const lp = allPts[Math.floor(allPts.length*0.15)];
+      if(lp) g.append('text').attr('x',xSc(lp[0])+5).attr('y',ySc(lp[1])-5)
+        .attr('fill',c.color).attr('font-size','9px')
+        .attr('font-family','DM Sans, sans-serif').attr('font-weight','600').attr('opacity',0.8)
+        .text(c.label);
+    } else {
+      drawPath(pts.main, c.color, c.dash||null, 2.2);
+      const mp = (pts.main||[])[Math.floor((pts.main||[]).length*0.2)];
+      if(mp) g.append('text').attr('x',xSc(mp[0])+5).attr('y',ySc(mp[1])-5)
+        .attr('fill',c.color).attr('font-size','9px')
+        .attr('font-family','DM Sans, sans-serif').attr('font-weight','600').attr('opacity',0.8)
+        .text(c.label);
+    }
+  });
+
+  d3.select('#mouse-overlay').style('cursor', drawMode ? 'crosshair' : 'default');
+}
+
+// ═══════════════════════════════════════════════════
+//  CURVE LIST UI
+// ═══════════════════════════════════════════════════
+function renderCurveList() {
+  const list = document.getElementById('curve-list');
+  const empty = document.getElementById('list-empty');
+  // Remove existing items
+  list.querySelectorAll('.curve-item').forEach(el=>el.remove());
+
+  const damageActive = Object.values(damagePoints).some(p=>p.length>0);
+  const hasAnything = curves.length > 0 || damageActive;
+  empty.style.display = hasAnything ? 'none' : 'flex';
+
+  // Damage curve entries (static, reflect actual points)
+  Object.entries(damagePoints).forEach(([key, pts]) => {
+    if (!pts.length) return;
+    const cfg = DAMAGE_CFG[key];
+    const item = makeCurveItem(key, cfg.label, cfg.color, cfg.dash, true, false);
+    list.insertBefore(item, document.getElementById('list-empty').nextSibling || null);
+    list.appendChild(item);
+  });
+
+  // Added curves
+  curves.forEach(c => {
+    let meta = '';
+    if (c.type==='thermal49') meta = `49RMS · Es2=${c.params.Es2}% · T1=${c.params.T1}m`;
+    else if (c.type==='idmt51') meta = c.params.presetKey==='SE'
+      ? `SE Proprietary · Is=${c.params.Is}×In · T=${c.params.TMS}`
+      : `${c.params.presetKey||'IDMT'} · Is=${c.params.Is}×In · TMS=${c.params.TMS}`;
+    else if (c.type==='definite') meta = `DT · Is=${c.params.Is}×In · ${c.params.delay}s`;
+
+    const item = makeCurveItem(c.id, c.label, c.color, c.dash, c.visible, true);
+    item.querySelector('.ci-meta').textContent = meta;
+    if (c.id === selectedId) item.classList.add('selected');
+    item.addEventListener('click', ()=>selectCurve(c.id));
+    list.appendChild(item);
+  });
+
+  document.getElementById('st-count').textContent = curves.length;
+}
+
+function makeCurveItem(id, label, color, dash, visible, deletable) {
+  const item = document.createElement('div');
+  item.className = 'curve-item';
+  item.dataset.id = id;
+
+  // SVG line swatch
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const s = document.createElementNS(svgNS,'svg');
+  s.setAttribute('width','26'); s.setAttribute('height','14');
+  const l = document.createElementNS(svgNS,'line');
+  l.setAttribute('x1','1'); l.setAttribute('y1','7');
+  l.setAttribute('x2','25'); l.setAttribute('y2','7');
+  l.setAttribute('stroke',color); l.setAttribute('stroke-width','2');
+  l.setAttribute('stroke-linecap','round');
+  if (dash) l.setAttribute('stroke-dasharray',dash);
+  s.appendChild(l);
+
+  item.innerHTML = `
+    <div class="ci-line-sample"></div>
+    <div class="ci-info">
+      <div class="ci-name">${label}</div>
+      <div class="ci-meta"></div>
+    </div>
+    <div class="ci-actions">
+      ${deletable ? `<button class="ci-btn ${visible?'':'off'}" data-action="toggle" title="Toggle">◐</button>` : ''}
+      ${deletable ? `<button class="ci-btn del" data-action="delete" title="Remove">×</button>` : ''}
+    </div>
+  `;
+  item.querySelector('.ci-line-sample').appendChild(s);
+
+  if (deletable) {
+    item.querySelector('[data-action="toggle"]').addEventListener('click', e => {
+      e.stopPropagation();
+      const c = curves.find(x=>x.id===id);
+      if(c){ c.visible=!c.visible; renderCurveList(); renderCurves(); }
+    });
+    item.querySelector('[data-action="delete"]').addEventListener('click', e => {
+      e.stopPropagation();
+      curves = curves.filter(x=>x.id!==id);
+      if (selectedId===id) { selectedId=null; renderPropPanel(); }
+      renderCurveList(); renderCurves();
+    });
+  }
+  return item;
+}
+
+function selectCurve(id) {
+  selectedId = id;
+  renderCurveList();
+  renderPropPanel();
+  // Switch to settings tab
+  document.querySelector('.stab[data-tab="settings"]').click();
+}
+
+// ═══════════════════════════════════════════════════
+//  PROPERTIES PANEL
+// ═══════════════════════════════════════════════════
+function renderPropPanel() {
+  const area = document.getElementById('prop-area');
+  const c = curves.find(x=>x.id===selectedId);
+  if (!c) {
+    area.innerHTML = '<div class="prop-empty" style="margin:20px 12px;">↖ Select a curve<br>to edit its settings</div>';
+    return;
+  }
+  let html = `<div class="prop-panel"><div class="prop-section">`;
+  html += `<div class="prop-title"><div class="prop-title-dot" style="background:${c.color}"></div>${c.label}</div>`;
+
+  if (c.type === 'thermal49') {
+    html += `
+    <div class="eq-display"><div class="eq-label">49RMS — Cold: E₀=Es0/100 · Hot: E₀=1.0</div>t = T₁·ln[(Ieq²−E₀²)/(Ieq²−Is2²)]</div>
+    <div class="grid-2">
+      <div class="field"><div class="field-label">Es2 <span class="mono">(%)</span></div><input class="field-input prop-input" data-key="Es2" type="number" value="${c.params.Es2}" step="1"></div>
+      <div class="field"><div class="field-label">Es1 — Alarm <span class="mono">(%)</span></div><input class="field-input prop-input" data-key="Es1" type="number" value="${c.params.Es1}" step="1"></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><div class="field-label">T1 <span class="mono">(min)</span></div><input class="field-input prop-input" data-key="T1" type="number" value="${c.params.T1}" step="1"></div>
+      <div class="field"><div class="field-label">T2 <span class="mono">(min)</span></div><input class="field-input prop-input" data-key="T2" type="number" value="${c.params.T2}" step="1"></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><div class="field-label">Es0 — Cold offset <span class="mono">(%)</span></div><input class="field-input prop-input" data-key="Es0" type="number" value="${c.params.Es0}" step="1"></div>
+      <div class="field"><div class="field-label">K factor</div><select class="field-input prop-input" data-key="K">
+        <option value="0" ${c.params.K==0?'selected':''}>0 — None</option>
+        <option value="2.25" ${c.params.K==2.25?'selected':''}>2.25</option>
+        <option value="4.5" ${c.params.K==4.5?'selected':''}>4.5</option>
+        <option value="9" ${c.params.K==9?'selected':''}>9</option>
+      </select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin:4px 0;">
+      <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" class="prop-check" data-key="showCold" ${c.params.showCold?'checked':''}> Cold
+      </label>
+      <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" class="prop-check" data-key="showHot" ${c.params.showHot?'checked':''}> Hot
+      </label>
+    </div>`;
+  } else if (c.type === 'idmt51') {
+    const isSE = c.params.presetKey === 'SE';
+    html += `
+    <div class="eq-display"><div class="eq-label">${isSE ? 'Schneider Proprietary — Piecewise' : 'IEC 60255-151 / IEEE C37.112'}</div>${isSE ? 't = (3.19/x^1.5)·T  |  (4.64/x^0.96)·T  |  T' : 't = TMS·α/(M^β−1)'}</div>
+    ${!isSE ? `<div class="grid-2">
+      <div class="field"><div class="field-label">α (alpha)</div><input class="field-input prop-input" data-key="alpha" type="number" value="${c.params.alpha}" step="0.001"></div>
+      <div class="field"><div class="field-label">β (beta)</div><input class="field-input prop-input" data-key="beta" type="number" value="${c.params.beta}" step="0.001"></div>
+    </div>` : ''}
+    <div class="grid-2">
+      <div class="field"><div class="field-label">Is <span class="mono">(× In)</span></div><input class="field-input prop-input" data-key="Is" type="number" value="${c.params.Is}" step="0.01"></div>
+      <div class="field"><div class="field-label">TMS / T</div><input class="field-input prop-input" data-key="TMS" type="number" value="${c.params.TMS}" step="0.01"></div>
+    </div>`;
+  } else if (c.type === 'definite') {
+    html += `
+    <div class="eq-display"><div class="eq-label">Definite Time</div>t = ${c.params.delay}s &nbsp; for I > Is</div>
+    <div class="grid-2">
+      <div class="field"><div class="field-label">Is <span class="mono">(× In)</span></div><input class="field-input prop-input" data-key="Is" type="number" value="${c.params.Is}" step="0.1"></div>
+      <div class="field"><div class="field-label">Delay <span class="mono">(s)</span></div><input class="field-input prop-input" data-key="delay" type="number" value="${c.params.delay}" step="0.01"></div>
+    </div>`;
+  }
+
+  html += `<button class="apply-btn" id="prop-apply">↺ Apply Changes</button>`;
+  html += `</div></div>`;
+  area.innerHTML = html;
+
+  document.getElementById('prop-apply').addEventListener('click', () => {
+    const c = curves.find(x=>x.id===selectedId);
+    if (!c) return;
+    area.querySelectorAll('.prop-input').forEach(el => {
+      const key = el.dataset.key;
+      c.params[key] = el.type==='number' ? +el.value : el.value;
+    });
+    area.querySelectorAll('.prop-check').forEach(el => {
+      c.params[el.dataset.key] = el.checked;
+    });
+    renderCurveList(); renderCurves();
+  });
+}
+
+// ═══════════════════════════════════════════════════
+//  MODAL — ADD CURVE
+// ═══════════════════════════════════════════════════
+let modalCurveType = null;
+let selectedPresetKey = 'VIT';
+
+function openModal() {
+  modalCurveType = null;
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('modal-step1').style.display = '';
+  document.getElementById('modal-step2').style.display = 'none';
+  document.getElementById('modal-next').textContent = 'Next →';
+  document.getElementById('modal-back').style.display = 'none';
+  document.querySelectorAll('.ct-card').forEach(el=>el.classList.remove('selected'));
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+}
+
+document.getElementById('btn-add-curve').addEventListener('click', openModal);
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('modal-cancel').addEventListener('click', closeModal);
+document.getElementById('modal').addEventListener('click', e => { if (e.target===e.currentTarget) closeModal(); });
+
+document.querySelectorAll('.ct-card').forEach(card => {
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.ct-card').forEach(c=>c.classList.remove('selected'));
+    card.classList.add('selected');
+    modalCurveType = card.dataset.type;
+  });
+});
+
+document.getElementById('modal-next').addEventListener('click', () => {
+  if (document.getElementById('modal-step2').style.display === 'none') {
+    // Move to step 2
+    if (!modalCurveType) return;
+    document.getElementById('modal-step1').style.display = 'none';
+    document.getElementById('modal-step2').style.display = '';
+    document.querySelectorAll('.modal-config').forEach(el=>el.classList.remove('visible'));
+    document.getElementById(`cfg-${modalCurveType}`).classList.add('visible');
+    document.getElementById('modal-next').textContent = 'Add Curve';
+    document.getElementById('modal-back').style.display = '';
+    // Auto-select first preset for IDMT
+    if (modalCurveType==='idmt51') applyPreset('VIT');
+  } else {
+    // Confirm — create curve
+    addCurveFromModal();
+    closeModal();
+  }
+});
+
+document.getElementById('modal-back').addEventListener('click', () => {
+  document.getElementById('modal-step1').style.display = '';
+  document.getElementById('modal-step2').style.display = 'none';
+  document.getElementById('modal-next').textContent = 'Next →';
+  document.getElementById('modal-back').style.display = 'none';
+});
+
+// Preset buttons
+function applyPreset(key) {
+  selectedPresetKey = key;
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.toggle('active', b.dataset.curve===key));
+  const p = IDMT_PRESETS[key];
+  document.getElementById('cfg-51-label').value = p.label;
+  const isSE = key === 'SE';
+  document.getElementById('se-note').style.display = isSE ? 'block' : 'none';
+  document.getElementById('cfg-51-alpha').disabled = isSE;
+  document.getElementById('cfg-51-beta').disabled = isSE;
+  if (!isSE && p.alpha!==null) {
+    document.getElementById('cfg-51-alpha').value = p.alpha;
+    document.getElementById('cfg-51-beta').value = p.beta;
+  }
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyPreset(btn.dataset.curve));
+});
+
+function addCurveFromModal() {
+  const color = PALETTE[paletteIdx % PALETTE.length];
+  paletteIdx++;
+  const id = `curve_${nextId++}`;
+
+  if (modalCurveType === 'thermal49') {
+    curves.push({
+      id, color,
+      type: 'thermal49',
+      label: document.getElementById('cfg-t49-label').value || '49RMS',
+      visible: true,
+      dash: null,
+      params: {
+        Es2: +document.getElementById('cfg-t49-es2').value,
+        Es1: +document.getElementById('cfg-t49-es1').value,
+        T1:  +document.getElementById('cfg-t49-t1').value,
+        T2:  +document.getElementById('cfg-t49-t2').value,
+        Es0: +document.getElementById('cfg-t49-es0').value,
+        K:   +document.getElementById('cfg-t49-k').value,
+        showCold: document.getElementById('cfg-t49-cold').checked,
+        showHot:  document.getElementById('cfg-t49-hot').checked,
+      }
+    });
+  } else if (modalCurveType === 'idmt51') {
+    const isSE = selectedPresetKey === 'SE';
+    curves.push({
+      id, color,
+      type: 'idmt51',
+      label: document.getElementById('cfg-51-label').value || 'IDMT',
+      visible: true,
+      dash: null,
+      params: {
+        presetKey: selectedPresetKey,
+        alpha: isSE ? null : +document.getElementById('cfg-51-alpha').value,
+        beta:  isSE ? null : +document.getElementById('cfg-51-beta').value,
+        Is:  +document.getElementById('cfg-51-is').value,
+        TMS: +document.getElementById('cfg-51-tms').value,
+      }
+    });
+  } else if (modalCurveType === 'definite') {
+    curves.push({
+      id, color,
+      type: 'definite',
+      label: document.getElementById('cfg-dt-label').value || 'DT',
+      visible: true,
+      dash: null,
+      params: {
+        Is:    +document.getElementById('cfg-dt-is').value,
+        delay: +document.getElementById('cfg-dt-delay').value,
+      }
+    });
+  }
+  renderCurveList(); renderCurves();
+}
+
+// ═══════════════════════════════════════════════════
+//  DRAW MODE & DAMAGE CURVES
+// ═══════════════════════════════════════════════════
+function setDrawMode(on) {
+  drawMode = on;
+  const bar = document.getElementById('draw-bar');
+  const btn = document.getElementById('btn-draw');
+  bar.classList.toggle('visible', on);
+  btn.classList.toggle('draw-active', on);
+  btn.textContent = on ? '◉  Drawing Mode ON' : '✎  Enter Draw Mode';
+  if (on) {
+    traceTarget = document.getElementById('trace-target').value;
+    document.getElementById('draw-target-label').textContent = DAMAGE_CFG[traceTarget].label;
+  }
+  d3.select('#mouse-overlay').style('cursor', on ? 'crosshair' : 'default');
+}
+
+document.getElementById('btn-draw').addEventListener('click', () => setDrawMode(!drawMode));
+document.getElementById('exit-draw').addEventListener('click', () => setDrawMode(false));
+document.getElementById('btn-clear-trace').addEventListener('click', () => {
+  damagePoints[document.getElementById('trace-target').value] = [];
+  renderCurveList(); renderCurves(); refreshPointList();
+});
+document.getElementById('trace-target').addEventListener('change', e => {
+  traceTarget = e.target.value;
+  refreshPointList();
+  if (drawMode) document.getElementById('draw-target-label').textContent = DAMAGE_CFG[traceTarget].label;
+});
+
+function refreshPointList() {
+  const key = document.getElementById('trace-target').value;
+  const pts = damagePoints[key];
+  const c = document.getElementById('point-list');
+  if (!pts.length) { c.innerHTML = '<div style="padding:5px 7px;color:var(--ink4);font-family:DM Mono,monospace;font-size:9.5px;">No points placed.</div>'; return; }
+  c.innerHTML = pts.map((p,i) =>
+    `<div class="point-item"><span>${p[0].toFixed(3)}× In</span><span>${p[1].toFixed(2)} s</span><span class="del-pt" data-i="${i}">×</span></div>`
+  ).join('');
+  c.querySelectorAll('.del-pt').forEach(el=>el.addEventListener('click',()=>{
+    damagePoints[key].splice(+el.dataset.i,1);
+    renderCurves(); refreshPointList(); renderCurveList();
+  }));
+}
+
+// Table entry
+let tableRows = [['','']];
+function renderTableRows() {
+  const c = document.getElementById('table-rows');
+  c.innerHTML = tableRows.map((r,i)=>`
+    <div class="table-row">
+      <input class="field-input" type="number" step="0.01" value="${r[0]}" data-ri="${i}" data-ci="0" placeholder="e.g. 6.5">
+      <input class="field-input" type="number" step="0.1" value="${r[1]}" data-ri="${i}" data-ci="1" placeholder="e.g. 30">
+      <button class="ci-btn del" data-ri="${i}" style="width:22px;height:22px;">×</button>
+    </div>`).join('');
+  c.querySelectorAll('input').forEach(el=>el.addEventListener('change',e=>{
+    tableRows[+e.target.dataset.ri][+e.target.dataset.ci] = e.target.value;
+  }));
+  c.querySelectorAll('.ci-btn.del').forEach(el=>el.addEventListener('click',()=>{
+    tableRows.splice(+el.dataset.ri,1);
+    renderTableRows();
+  }));
+}
+document.getElementById('btn-add-row').addEventListener('click', ()=>{ tableRows.push(['','']); renderTableRows(); });
+document.getElementById('btn-apply-table').addEventListener('click', ()=>{
+  const key = document.getElementById('trace-target').value;
+  const valid = tableRows.filter(r=>r[0]!==''&&r[1]!=='').map(r=>[+r[0],+r[1]]).filter(r=>r[0]>0&&r[1]>0);
+  if(!valid.length) return;
+  valid.sort((a,b)=>a[0]-b[0]);
+  damagePoints[key] = valid;
+  renderCurves(); refreshPointList(); renderCurveList();
+});
+renderTableRows();
+
+// ═══════════════════════════════════════════════════
+//  MOUSE EVENTS
+// ═══════════════════════════════════════════════════
+function onChartClick(event) {
+  if (!drawMode) return;
+  const [mx,my] = d3.pointer(event);
+  const I = xSc.invert(mx), t = ySc.invert(my);
+  if (I<0.8||I>15||t<0.1||t>7200) return;
+  traceTarget = document.getElementById('trace-target').value;
+  damagePoints[traceTarget].push([+I.toFixed(4),+t.toFixed(3)]);
+  damagePoints[traceTarget].sort((a,b)=>a[0]-b[0]);
+  renderCurves(); refreshPointList(); renderCurveList();
+}
+
+function onMouseMove(event) {
+  const [mx,my] = d3.pointer(event);
+  const I = xSc.invert(mx), t = ySc.invert(my);
+  if (!I||!t) return;
+  const tip = document.getElementById('tooltip');
+  tip.innerHTML = `I/In = <b>${I.toFixed(3)}×</b>  &thinsp;·&thinsp;  t = <b>${t.toFixed(2)} s</b>`;
+  tip.style.opacity = 1;
+  tip.style.left = (event.clientX+14)+'px';
+  tip.style.top  = (event.clientY-30)+'px';
+  document.getElementById('st-coord').textContent = `${I.toFixed(3)}× In, ${t.toFixed(2)} s`;
+}
+
+// ═══════════════════════════════════════════════════
+//  SIDEBAR TABS
+// ═══════════════════════════════════════════════════
+document.querySelectorAll('.stab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.stab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+    if(tab.dataset.tab==='damage') refreshPointList();
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  GLOBAL CONTROLS
+// ═══════════════════════════════════════════════════
+document.getElementById('btn-clear-all').addEventListener('click',()=>{
+  if(!confirm('Clear all curves and damage points?')) return;
+  curves=[]; selectedId=null; paletteIdx=0;
+  Object.keys(damagePoints).forEach(k=>damagePoints[k]=[]);
+  renderCurveList(); renderCurves(); renderPropPanel(); refreshPointList();
+});
+
+document.getElementById('btn-export').addEventListener('click',()=>{
+  const s = document.getElementById('chart-svg').cloneNode(true);
+  const st = document.createElement('style');
+  st.textContent = `text { font-family: sans-serif; } line { vector-effect: non-scaling-stroke; }`;
+  s.insertBefore(st,s.firstChild);
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(s)],{type:'image/svg+xml'}));
+  const a=document.createElement('a'); a.href=url; a.download='tcc-sepam40.svg'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ═══════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════
+window.addEventListener('resize',()=>{ initChart(); renderCurves(); });
+initChart();
+renderCurveList();
+renderCurves();
+refreshPointList();
+</script>
+</body>
+</html>
